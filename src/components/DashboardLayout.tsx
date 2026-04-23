@@ -18,8 +18,8 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     setDark(!dark);
   };
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     navigate("/login");
   };
 
