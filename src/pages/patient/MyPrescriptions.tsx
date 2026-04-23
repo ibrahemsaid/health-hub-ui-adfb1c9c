@@ -1,8 +1,28 @@
-import { mockPrescriptions } from "@/data/mockData";
+import { useEffect, useState } from "react";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
 import { Pill } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export default function MyPrescriptions() {
-  const prescriptions = mockPrescriptions.filter(p => p.patientName === "John Smith");
+  const { user } = useAuth();
+  const [prescriptions, setPrescriptions] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      const { data } = await supabase
+        .from("prescriptions")
+        .select("id, medication, dosage, instructions, created_at")
+        .eq("patient_id", user.id)
+        .order("created_at", { ascending: false });
+      setPrescriptions(data || []);
+      setLoading(false);
+    })();
+  }, [user]);
+
+  if (loading) return <div className="page-container"><Skeleton className="h-64" /></div>;
 
   return (
     <div className="page-container">
