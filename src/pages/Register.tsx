@@ -6,24 +6,27 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Heart, User, Mail, Lock, Phone, AlertCircle } from "lucide-react";
+import { toast } from "sonner";
 
 export default function Register() {
   const { register } = useAuth();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ name: "", email: "", password: "", role: "" as UserRole, phone: "" });
+  const [form, setForm] = useState({ name: "", email: "", password: "", role: "" as UserRole | "", phone: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.role) { setError("Please select a role"); return; }
+    if (form.password.length < 6) { setError("Password must be at least 6 characters"); return; }
     setError("");
     setLoading(true);
     try {
-      await register(form);
+      await register({ ...form, role: form.role as UserRole });
+      toast.success("Account created! Signing you in...");
       navigate("/dashboard");
-    } catch {
-      setError("Registration failed");
+    } catch (err: any) {
+      setError(err?.message || "Registration failed");
     } finally {
       setLoading(false);
     }
@@ -43,25 +46,21 @@ export default function Register() {
           </p>
         </div>
       </div>
-
       <div className="flex-1 flex items-center justify-center p-8">
         <div className="w-full max-w-md space-y-8 animate-slide-up">
           <div className="lg:hidden flex items-center gap-2 text-primary mb-4">
             <Heart className="h-7 w-7" />
             <span className="text-xl font-display font-bold">HealthDB</span>
           </div>
-
           <div>
             <h2 className="text-2xl font-display font-bold text-foreground">Create Account</h2>
             <p className="text-muted-foreground mt-1">Fill in your details to get started</p>
           </div>
-
           {error && (
             <div className="flex items-center gap-2 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
               <AlertCircle className="h-4 w-4 shrink-0" />{error}
             </div>
           )}
-
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
               <Label>Full Name</Label>
@@ -96,17 +95,16 @@ export default function Register() {
               <Select value={form.role} onValueChange={v => setForm(f => ({ ...f, role: v as UserRole }))}>
                 <SelectTrigger><SelectValue placeholder="Select your role" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="admin">Admin</SelectItem>
                   <SelectItem value="doctor">Doctor</SelectItem>
                   <SelectItem value="patient">Patient</SelectItem>
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">Admin accounts are created by existing administrators only.</p>
             </div>
             <Button type="submit" className="w-full gradient-bg text-primary-foreground" disabled={loading}>
               {loading ? "Creating account..." : "Create Account"}
             </Button>
           </form>
-
           <p className="text-center text-sm text-muted-foreground">
             Already have an account?{" "}
             <Link to="/login" className="text-primary font-medium hover:underline">Sign in</Link>

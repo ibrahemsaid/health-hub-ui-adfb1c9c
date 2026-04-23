@@ -1,8 +1,10 @@
-import React, { createContext, useContext, useState, useCallback } from "react";
+import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import type { Session } from "@supabase/supabase-js";
 
 export type UserRole = "admin" | "doctor" | "patient";
 
-export interface User {
+export interface AppUser {
   id: string;
   name: string;
   email: string;
@@ -11,58 +13,109 @@ export interface User {
 }
 
 interface AuthContextType {
-  user: User | null;
+  user: AppUser | null;
+  session: Session | null;
+  loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (data: Omit<User, "id"> & { password: string }) => Promise<void>;
-  logout: () => void;
-  updateProfile: (data: Partial<User>) => void;
+  register: (data: { name: string; email: string; password: string; role: UserRole; phone: string }) => Promise<void>;
+  logout: () => Promise<void>;
+  updateProfile: (data: Partial<Pick<AppUser, "name" | "phone">> & { password?: string }) => Promise<void>;
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-// Mock users for demo
-const MOCK_USERS: (User & { password: string })[] = [
-  { id: "1", name: "Dr. Admin", email: "admin@health.com", role: "admin", phone: "+1234567890", password: "admin123" },
-  { id: "2", name: "Dr. Sarah Johnson", email: "doctor@health.com", role: "doctor", phone: "+1234567891", password: "doctor123" },
-  { id: "3", name: "John Smith", email: "patient@health.com", role: "patient", phone: "+1234567892", password: "patient123" },
-];
+async function loadUser(userId: string, email: string): Promise<AppUser | null> {
+  const [{ data: profile }, { data: roleRow }] = await Promise.all([
+    supabase.from("profiles").select("name, phone").eq("user_id", userId).maybeSingle(),
+    supabase.from("user_roles").select("role").eq("user_id", userId).maybeSingle(),
+  ]);
+  return {
+    id: userId,
+    email,
+    name: profile?.name || "",
+    phone: profile?.phone || "",
+    role: (roleRow?.role as UserRole) || "patient",
+  };
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem("health_user");
-    return saved ? JSON.parse(saved) : null;
-  });
+  const [session, setSession] = useState<Session | null>(null);
+  const [user, setUser] = useState<AppUser | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, sess) => {
+      setSession(sess);
+      if (sess?.user) {
+        setTimeout(async () => {
+          const u = await loadUser(sess.user.id, sess.user.email || "");
+          setUser(u);
+        }, 0);
+      } else {
+        setUser(null);
+      }
+    });
+
+    supabase.auth.getSession().then(async ({ data: { session: sess } }) => {
+      setSession(sess);
+      if (sess?.user) {
+        const u = await loadUser(sess.user.id, sess.user.email || "");
+        setUser(u);
+      }
+      setLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
 
   const login = useCallback(async (email: string, password: string) => {
-    const found = MOCK_USERS.find(u => u.email === email && u.password === password);
-    if (!found) throw new Error("Invalid credentials");
-    const { password: _, ...userData } = found;
-    setUser(userData);
-    localStorage.setItem("health_user", JSON.stringify(userData));
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw error;
   }, []);
 
-  const register = useCallback(async (data: Omit<User, "id"> & { password: string }) => {
-    const newUser: User = { ...data, id: crypto.randomUUID() };
-    setUser(newUser);
-    localStorage.setItem("health_user", JSON.stringify(newUser));
-  }, []);
-
-  const logout = useCallback(() => {
-    setUser(null);
-    localStorage.removeItem("health_user");
-  }, []);
-
-  const updateProfile = useCallback((data: Partial<User>) => {
-    setUser(prev => {
-      if (!prev) return null;
-      const updated = { ...prev, ...data };
-      localStorage.setItem("health_user", JSON.stringify(updated));
-      return updated;
+  const register = useCallback(async (data: { name: string; email: string; password: string; role: UserRole; phone: string }) => {
+    const role = data.role === "admin" ? "patient" : data.role;
+    const { error } = await supabase.auth.signUp({
+      email: data.email,
+      password: data.password,
+      options: {
+        emailRedirectTo: `${window.location.origin}/dashboard`,
+        data: { name: data.name, phone: data.phone, role },
+      },
     });
+    if (error) throw error;
   }, []);
+
+  const logout = useCallback(async () => {
+    await supabase.auth.signOut();
+  }, []);
+
+  const refreshUser = useCallback(async () => {
+    if (session?.user) {
+      const u = await loadUser(session.user.id, session.user.email || "");
+      setUser(u);
+    }
+  }, [session]);
+
+  const updateProfile = useCallback(async (data: Partial<Pick<AppUser, "name" | "phone">> & { password?: string }) => {
+    if (!session?.user) throw new Error("Not authenticated");
+    const updates: any = {};
+    if (data.name !== undefined) updates.name = data.name;
+    if (data.phone !== undefined) updates.phone = data.phone;
+    if (Object.keys(updates).length > 0) {
+      const { error } = await supabase.from("profiles").update(updates).eq("user_id", session.user.id);
+      if (error) throw error;
+    }
+    if (data.password) {
+      const { error } = await supabase.auth.updateUser({ password: data.password });
+      if (error) throw error;
+    }
+    await refreshUser();
+  }, [session, refreshUser]);
 
   return (
-    <AuthContext.Provider value={{ user, login, register, logout, updateProfile }}>
+    <AuthContext.Provider value={{ user, session, loading, login, register, logout, updateProfile, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );
